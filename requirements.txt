@@ -1,0 +1,8 @@
+matplotlib=3.7.2
+pandas=2.0.3
+tensorflow=2.13
+datasets
+evaluate
+numpy~=1.24.3
+tqdm~=4.65.0
+transformers~=4.31.0
