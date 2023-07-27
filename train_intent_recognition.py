@@ -1,8 +1,7 @@
-from typing import List, Any
+from typing import List
 
 from transformers import AutoTokenizer
-from transformers import DataCollatorWithPadding
-from datasets import load_dataset, DatasetDict, Dataset
+from datasets import load_dataset, DatasetDict
 from transformers import TFAutoModelForSequenceClassification
 from transformers import create_optimizer
 import tensorflow as tf
@@ -12,13 +11,11 @@ import numpy as np
 
 import config
 
-accuracy = evaluate.load(config.eval_metric)
-model_name = config.model_name
-
 
 def compute_metrics(eval_pred):
     predictions, labels = eval_pred
     predictions = np.argmax(predictions, axis=1)
+    accuracy = evaluate.load(config.eval_metric)
     return accuracy.compute(predictions=predictions, references=labels)
 
 
@@ -29,14 +26,19 @@ def map_id_label(dd: DatasetDict):
     return id2label, label2id
 
 
-def load_split_dataset(files: List[str]) -> DatasetDict:
+def load_split_dataset(files: List[str], path_to_save: str = None) -> DatasetDict:
     # ds = load_dataset('csv', delimiter="\t", data_files=['dataset/part1.tsv', 'dataset/part2.tsv'])
     ds = load_dataset('csv', delimiter="\t", data_files=files)
-    ds_train = ds['train'].rename_column('intent', 'label').class_encode_column("label")
+    ds_train = ds['train'].add_column(name='label', column=ds['train']['intent'])
+    ds_train = ds_train.class_encode_column("label")
 
     dd = ds_train.train_test_split(seed=42,
                                    test_size=0.2,
                                    stratify_by_column='label')
+    if path_to_save:
+        dd['train'].to_csv(f'{path_to_save}/train.csv', sep='\t')
+        dd['test'].to_csv(f'{path_to_save}/test.csv', sep='\t')
+
     return dd
 
 
@@ -75,29 +77,43 @@ def prepare_datasets(model, tokenizer, tokenized_ds):
     return tf_train_set, tf_validation_set
 
 
-def train(dataset_dict: DatasetDict):
-
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    tokenized_ds = dataset_dict.map(lambda ex: tokenizer(ex["text"], truncation=True), batched=True)
-
-    id2label, label2id = map_id_label(dataset_dict)
+def create_model(id2label, label2id):
     model = TFAutoModelForSequenceClassification.from_pretrained(
-        model_name, num_labels=len(id2label), id2label=id2label, label2id=label2id
-    )
+        config.model_name,
+        num_labels=len(id2label),
+        id2label=id2label,
+        label2id=label2id)
 
     batches_per_epoch = len(dataset_dict["train"]) // config.batch_size
     total_train_steps = int(batches_per_epoch * config.num_epochs)
-    optimizer, schedule = create_optimizer(init_lr=2e-5, num_warmup_steps=0, num_train_steps=total_train_steps)
 
-    tf_train_set, tf_validation_set = prepare_datasets(model, tokenizer, tokenized_ds)
-
+    optimizer, schedule = create_optimizer(init_lr=config.learning_rate,
+                                           num_warmup_steps=0,
+                                           num_train_steps=total_train_steps)
     model.compile(optimizer=optimizer)
 
-    callbacks = define_callbacks(tf_validation_set)
+    return model
 
+
+def train(dataset_dict: DatasetDict, model):
+    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+    tokenized_ds = dataset_dict.map(lambda ex: tokenizer(ex["text"], truncation=True), batched=True)
+    tf_train_set, tf_validation_set = prepare_datasets(model, tokenizer, tokenized_ds)
+    callbacks = define_callbacks(tf_validation_set)
     model.fit(x=tf_train_set, validation_data=tf_validation_set, epochs=config.num_epochs, callbacks=callbacks)
 
 
+def save_last_model(model):
+    import os
+    cmd = 'zip -r intent_bert.zip intent_bert'
+    model.save_pretrained('intent_bert', from_pt=True)
+    os.system(cmd)
+    last_model = TFAutoModelForSequenceClassification.from_pretrained('intent_bert')
+
+
 if __name__ == '__main__':
-    dataset_dict = load_split_dataset(config.dataset_files)
+    dataset_dict = load_split_dataset(config.dataset_files, config.train_test_split_path)
+    id2label, label2id = map_id_label(dataset_dict)
+    model = create_model(id2label, label2id)
     train(dataset_dict)
+    save_last_model(model)
