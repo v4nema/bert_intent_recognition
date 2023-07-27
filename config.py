@@ -5,3 +5,4 @@ num_epochs = 50
 learning_rate = 2e-5
 dataset_files = ['dataset/part1.tsv', 'dataset/part2.tsv']
 train_test_split_path = 'dataset'
+results_path = 'results'

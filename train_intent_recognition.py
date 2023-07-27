@@ -1,12 +1,16 @@
+import json
+import os
+import time
 from typing import List
 
-from transformers import AutoTokenizer
-from datasets import load_dataset, DatasetDict
+from transformers import AutoTokenizer, pipeline, Pipeline
+from datasets import load_dataset, DatasetDict, Dataset
 from transformers import TFAutoModelForSequenceClassification
 from transformers import create_optimizer
 import tensorflow as tf
 from transformers.keras_callbacks import KerasMetricCallback
 import evaluate
+
 import numpy as np
 
 import config
@@ -95,25 +99,47 @@ def create_model(id2label, label2id):
     return model
 
 
-def train(dataset_dict: DatasetDict, model):
+def train(dataset_dict: DatasetDict, model) -> Pipeline:
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     tokenized_ds = dataset_dict.map(lambda ex: tokenizer(ex["text"], truncation=True), batched=True)
     tf_train_set, tf_validation_set = prepare_datasets(model, tokenizer, tokenized_ds)
     callbacks = define_callbacks(tf_validation_set)
     model.fit(x=tf_train_set, validation_data=tf_validation_set, epochs=config.num_epochs, callbacks=callbacks)
 
+    model.load_weights('ckpt/best_model')
+    pipe = pipeline("text-classification", model=model, tokenizer=tokenizer)
+    return pipe
 
-def save_last_model(model):
-    import os
-    cmd = 'zip -r intent_bert.zip intent_bert'
-    model.save_pretrained('intent_bert', from_pt=True)
-    os.system(cmd)
-    last_model = TFAutoModelForSequenceClassification.from_pretrained('intent_bert')
+
+def test(dataset: Dataset, label2id, pipe: Pipeline):
+    task_evaluator = evaluate.evaluator("text-classification")
+    print('Computing evaluation results... It takes a lot, be patient...')
+    result = task_evaluator.compute(
+        model_or_pipeline=pipe,
+        data=dataset,
+        label_mapping=label2id
+    )
+    print('Evaluation completed.')
+    file = os.path.join(config.results_path, f'{str(int(time.time()))}_evaluation.json')
+    with open(file, "w") as f:
+        json.dump(result, f)
+    return result
+
+# def save_last_model(model):
+#     import os
+#     cmd = 'zip -r intent_bert.zip intent_bert'
+#     model.save_pretrained('intent_bert', from_pt=True)
+#     os.system(cmd)
+#     last_model = TFAutoModelForSequenceClassification.from_pretrained('intent_bert')
 
 
 if __name__ == '__main__':
     dataset_dict = load_split_dataset(config.dataset_files, config.train_test_split_path)
     id2label, label2id = map_id_label(dataset_dict)
     model = create_model(id2label, label2id)
-    train(dataset_dict)
-    save_last_model(model)
+    pipe = train(dataset_dict, model)
+
+    ds_test = Dataset.from_csv(f'{config.train_test_split_path}/test.csv', sep='\t')
+    result = test(ds_test, label2id, pipe)
+    print(result)
+    # save_last_model(model)
