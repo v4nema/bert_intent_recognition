@@ -1,6 +1,3 @@
-import json
-import os
-import time
 from typing import List
 
 from transformers import AutoTokenizer, pipeline, Pipeline
@@ -99,52 +96,35 @@ def create_model(id2label, label2id, len_dataset_dict_train):
     return model
 
 
-def train(dataset_dict: DatasetDict, model) -> Pipeline:
+def train(dataset_dict: DatasetDict, model, ckpt_path) -> Pipeline:
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     tokenized_ds = dataset_dict.map(lambda ex: tokenizer(ex["text"], truncation=True), batched=True)
     tf_train_set, tf_validation_set = prepare_datasets(model, tokenizer, tokenized_ds)
     callbacks = define_callbacks(tf_validation_set)
     model.fit(x=tf_train_set, validation_data=tf_validation_set, epochs=config.num_epochs, callbacks=callbacks)
 
-    model.load_weights('ckpt/best_model')
+    model.load_weights(ckpt_path)
     pipe = pipeline("text-classification", model=model, tokenizer=tokenizer)
     return pipe
 
 
-def test(dataset: Dataset, label2id, pipe: Pipeline):
-    task_evaluator = evaluate.evaluator("text-classification")
-    print('Computing evaluation results... It takes a lot, be patient...')
-    result = task_evaluator.compute(
-        model_or_pipeline=pipe,
-        data=dataset,
-        label_mapping=label2id
-    )
-    print('Evaluation completed.')
-    file = os.path.join(config.results_path, f'{str(int(time.time()))}_evaluation.json')
-    with open(file, "w") as f:
-        json.dump(result, f)
-    return result
-
-# def save_last_model(model):
-#     import os
-#     cmd = 'zip -r intent_bert.zip intent_bert'
-#     model.save_pretrained('intent_bert', from_pt=True)
-#     os.system(cmd)
-#     last_model = TFAutoModelForSequenceClassification.from_pretrained('intent_bert')
-
-
 if __name__ == '__main__':
-    dataset_files = ['dataset/part1.tsv', 'dataset/part2.tsv']
-    dataset_dict = load_split_dataset(dataset_files,
-                                      'dataset' if config.save_train_test_split else None)
+    # define paths
+    data_path = 'dataset'
+    pipeline_path = 'pipe'
+    ckpt_path = 'ckpt/best_model'
 
+    # Load dataset and save train test split
+    dataset_files = [f'{data_path}/part1.tsv', f'{data_path}/part2.tsv']
+    dataset_dict = load_split_dataset(dataset_files,
+                                      data_path if config.save_train_test_split
+                                      else None)
+    # Create model
     id2label, label2id = map_id_label(dataset_dict)
     len_dataset_dict_train = len(dataset_dict["train"])
     model = create_model(id2label, label2id, len_dataset_dict_train)
-    pipe = train(dataset_dict, model)
 
-    path_to_save = 'dataset'
-    ds_test = Dataset.from_csv(f'{path_to_save}/test.csv', sep='\t')
-    result = test(ds_test, label2id, pipe)
-    print(result)
-    # save_last_model(model)
+    # Run training and save pipeline
+    pipe = train(dataset_dict, model, ckpt_path)
+    pipe.save_pretrained(pipeline_path)
+
