@@ -19,7 +19,29 @@ def test(dataset: Dataset, pipe: Pipeline, results_path: str):
     file = os.path.join(results_path, f'{str(int(time.time()))}_evaluation.json')
     with open(file, "w") as f:
         json.dump(result, f)
+
+    score = pipe(ds_test['text'], top_k=101)
+    file = os.path.join(results_path, f'{str(int(time.time()))}_score.json')
+    with open(file, "w") as f:
+        json.dump(score, f)
+
     return result
+
+
+def save_scores(dataset: Dataset, pipe: Pipeline, results_path: str):
+    res = []
+    for text in dataset['text']:
+        p_res = pipe(text, top_k=101)
+        obj = {
+            'text': text,
+            'results': p_res
+        }
+        # obj.update({'results': p_res})
+        res.append(obj)
+
+    file = os.path.join(results_path, f'{str(int(time.time()))}_score.json')
+    with open(file, "w") as f:
+        json.dump(res, f)
 
 
 if __name__ == '__main__':
@@ -34,4 +56,5 @@ if __name__ == '__main__':
 
     # Run test code
     result = test(ds_test, pipe, results_path)
+    save_scores(ds_test, pipe, results_path)
     print(result)
