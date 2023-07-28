@@ -81,14 +81,14 @@ def prepare_datasets(model, tokenizer, tokenized_ds):
     return tf_train_set, tf_validation_set
 
 
-def create_model(id2label, label2id):
+def create_model(id2label, label2id, len_dataset_dict_train):
     model = TFAutoModelForSequenceClassification.from_pretrained(
         config.model_name,
         num_labels=len(id2label),
         id2label=id2label,
         label2id=label2id)
 
-    batches_per_epoch = len(dataset_dict["train"]) // config.batch_size
+    batches_per_epoch = len_dataset_dict_train // config.batch_size
     total_train_steps = int(batches_per_epoch * config.num_epochs)
 
     optimizer, schedule = create_optimizer(init_lr=config.learning_rate,
@@ -134,12 +134,17 @@ def test(dataset: Dataset, label2id, pipe: Pipeline):
 
 
 if __name__ == '__main__':
-    dataset_dict = load_split_dataset(config.dataset_files, config.train_test_split_path)
+    dataset_files = ['dataset/part1.tsv', 'dataset/part2.tsv']
+    dataset_dict = load_split_dataset(dataset_files,
+                                      'dataset' if config.save_train_test_split else None)
+
     id2label, label2id = map_id_label(dataset_dict)
-    model = create_model(id2label, label2id)
+    len_dataset_dict_train = len(dataset_dict["train"])
+    model = create_model(id2label, label2id, len_dataset_dict_train)
     pipe = train(dataset_dict, model)
 
-    ds_test = Dataset.from_csv(f'{config.train_test_split_path}/test.csv', sep='\t')
+    path_to_save = 'dataset'
+    ds_test = Dataset.from_csv(f'{path_to_save}/test.csv', sep='\t')
     result = test(ds_test, label2id, pipe)
     print(result)
     # save_last_model(model)
