@@ -1,106 +1,15 @@
-from typing import List
-
+from datasets import DatasetDict
 from transformers import AutoTokenizer, pipeline, Pipeline
-from datasets import load_dataset, DatasetDict, Dataset
-from transformers import TFAutoModelForSequenceClassification
-from transformers import create_optimizer
-import tensorflow as tf
-from transformers.keras_callbacks import KerasMetricCallback
-import evaluate
-
-import numpy as np
 
 import config
-
-
-def compute_metrics(eval_pred):
-    predictions, labels = eval_pred
-    predictions = np.argmax(predictions, axis=1)
-    accuracy = evaluate.load(config.eval_metric)
-    return accuracy.compute(predictions=predictions, references=labels)
-
-
-def map_id_label(dd: DatasetDict):
-    id2label = {i: v for i, v in enumerate(dd['train'].info.features['label'].names)}
-    label2id = {v: i for i, v in id2label.items()}
-    # num_labels = len(id2label)
-    return id2label, label2id
-
-
-def load_split_dataset(files: List[str], path_to_save: str = None) -> DatasetDict:
-    # ds = load_dataset('csv', delimiter="\t", data_files=['dataset/part1.tsv', 'dataset/part2.tsv'])
-    ds = load_dataset('csv', delimiter="\t", data_files=files)
-    ds_train = ds['train'].add_column(name='label', column=ds['train']['intent'])
-    ds_train = ds_train.class_encode_column("label")
-
-    dd = ds_train.train_test_split(seed=42,
-                                   test_size=0.2,
-                                   stratify_by_column='label')
-    if path_to_save:
-        dd['train'].to_csv(f'{path_to_save}/train.csv', sep='\t')
-        dd['test'].to_csv(f'{path_to_save}/test.csv', sep='\t')
-
-    return dd
-
-
-def define_callbacks(tf_validation_set) -> List[tf.keras.callbacks.Callback]:
-    callbacks = []
-
-    metric_callback = KerasMetricCallback(metric_fn=compute_metrics, eval_dataset=tf_validation_set)
-    callbacks.append(metric_callback)
-
-    checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-        filepath='ckpt/best_model',
-        save_weights_only=True,
-        monitor='accuracy',
-        mode='max',
-        save_best_only=True)
-    callbacks.append(checkpoint_callback)
-
-    return callbacks
-
-
-def prepare_datasets(model, tokenizer, tokenized_ds):
-    tf_train_set = model.prepare_tf_dataset(
-        tokenized_ds["train"],
-        shuffle=True,
-        batch_size=config.batch_size,
-        tokenizer=tokenizer,
-    )
-
-    tf_validation_set = model.prepare_tf_dataset(
-        tokenized_ds["test"],
-        shuffle=False,
-        batch_size=config.batch_size,
-        tokenizer=tokenizer,
-    )
-
-    return tf_train_set, tf_validation_set
-
-
-def create_model(id2label, label2id, len_dataset_dict_train):
-    model = TFAutoModelForSequenceClassification.from_pretrained(
-        config.model_name,
-        num_labels=len(id2label),
-        id2label=id2label,
-        label2id=label2id)
-
-    batches_per_epoch = len_dataset_dict_train // config.batch_size
-    total_train_steps = int(batches_per_epoch * config.num_epochs)
-
-    optimizer, schedule = create_optimizer(init_lr=config.learning_rate,
-                                           num_warmup_steps=0,
-                                           num_train_steps=total_train_steps)
-    model.compile(optimizer=optimizer)
-
-    return model
+import model_utils
 
 
 def train(dataset_dict: DatasetDict, model, ckpt_path) -> Pipeline:
     tokenizer = AutoTokenizer.from_pretrained(config.model_name)
     tokenized_ds = dataset_dict.map(lambda ex: tokenizer(ex["text"], truncation=True), batched=True)
-    tf_train_set, tf_validation_set = prepare_datasets(model, tokenizer, tokenized_ds)
-    callbacks = define_callbacks(tf_validation_set)
+    tf_train_set, tf_validation_set = model_utils.prepare_datasets(model, tokenizer, tokenized_ds)
+    callbacks = model_utils.define_callbacks(tf_validation_set)
     model.fit(x=tf_train_set, validation_data=tf_validation_set, epochs=config.num_epochs, callbacks=callbacks)
 
     model.load_weights(ckpt_path)
@@ -115,14 +24,15 @@ if __name__ == '__main__':
     ckpt_path = 'ckpt/best_model'
 
     # Load dataset and save train test split
+    from dataset_utils import load_split_save
+
     dataset_files = [f'{data_path}/part1.tsv', f'{data_path}/part2.tsv']
-    dataset_dict = load_split_dataset(dataset_files,
-                                      data_path if config.save_train_test_split
-                                      else None)
+    dataset_dict = load_split_save(input=dataset_files, path_to_save=data_path)
+
     # Create model
-    id2label, label2id = map_id_label(dataset_dict)
+    id2label, label2id = model_utils.map_id_label(dataset_dict)
     len_dataset_dict_train = len(dataset_dict["train"])
-    model = create_model(id2label, label2id, len_dataset_dict_train)
+    model = model_utils.create_model(id2label, label2id, len_dataset_dict_train)
 
     # Run training and save pipeline
     pipe = train(dataset_dict, model, ckpt_path)

@@ -20,23 +20,27 @@ def test(dataset: Dataset, pipe: Pipeline, results_path: str):
     with open(file, "w") as f:
         json.dump(result, f)
 
-    score = pipe(ds_test['text'], top_k=101)
-    file = os.path.join(results_path, f'{str(int(time.time()))}_score.json')
-    with open(file, "w") as f:
-        json.dump(score, f)
+    # score = pipe(ds_test['text'], top_k=101)
+    # file = os.path.join(results_path, f'{str(int(time.time()))}_score.json')
+    # with open(file, "w") as f:
+    #     json.dump(score, f)
 
     return result
+
+
+def predict(pipe: Pipeline, text: str, top_k: int = 101):
+    prediction = pipe(text, top_k=top_k)
+    obj = {
+        'text': text,
+        'results': prediction
+    }
+    return obj
 
 
 def save_scores(dataset: Dataset, pipe: Pipeline, results_path: str):
     res = []
     for text in dataset['text']:
-        p_res = pipe(text, top_k=101)
-        obj = {
-            'text': text,
-            'results': p_res
-        }
-        # obj.update({'results': p_res})
+        obj = predict(pipe, text, 101)
         res.append(obj)
 
     file = os.path.join(results_path, f'{str(int(time.time()))}_score.json')
@@ -57,4 +61,4 @@ if __name__ == '__main__':
     # Run test code
     result = test(ds_test, pipe, results_path)
     save_scores(ds_test, pipe, results_path)
-    print(result)
+    # print(result)
