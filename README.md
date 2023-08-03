@@ -13,6 +13,7 @@ At the end of the process, the script will save the pipeline with the trained mo
 
 ## Test
 Run the test_intent_recognition.py script. This script can evaluate the model on the whole test set or only on specific statements.
+It needs the pipeline path.
 
 ## Intent Recognition Service
 Run the script run_intent_recognition.py in order to use intent recognition as a REST API.
